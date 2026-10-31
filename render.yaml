@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: trader-vikki-scanner
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    plan: free
+    envVars:
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: FYERS_APP_ID
+        sync: false
+      - key: FYERS_APP_SECRET
+        sync: false
+      - key: FYERS_REDIRECT_URI
+        sync: false
