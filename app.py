@@ -1,4 +1,3 @@
-
 import os
 import secrets
 import hashlib
@@ -16,6 +15,7 @@ app.config.update(
 
 AUTH_URL = "https://api-t1.fyers.in/api/v3/generate-authcode"
 TOKEN_URL = "https://api-t1.fyers.in/api/v3/validate-authcode"
+DATA_URL = "https://api-t1.fyers.in/data"
 access_token = None
 
 def fyers_settings():
@@ -50,7 +50,8 @@ small{color:#555}.ok{color:#087443}.bad{color:#a32626}
 </style></head><body><div class="card">
 <h1>Trader Vikki Scanner</h1><div class="tag">FYERS secure connection setup</div>
 <div class="status">{{ status }}</div>
-{% if ready %}<a href="/login"><button>Connect FYERS</button></a>
+{% if access_token %}<a href="/market-test"><button>Test live market data</button></a>
+{% elif ready %}<a href="/login"><button>Connect FYERS</button></a>
 {% else %}<p class="bad">The server is missing one or more private settings. The diagnostic page shows only whether each setting exists; it never reveals secret values.</p>{% endif %}
 <p><small>Market-data access only. This app does not place trades.</small></p>
 </div></body></html>
@@ -61,7 +62,7 @@ def home():
     settings = fyers_settings()
     missing = missing_settings(settings)
     if access_token:
-        status = "FYERS connection established for this server session."
+        status = "FYERS connection established for this server session. Market-data test is available below."
     elif not missing:
         status = "Backend configured. You can connect FYERS."
     else:
@@ -152,3 +153,46 @@ def connection_status():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "10000"))
     app.run(host="0.0.0.0", port=port)
+
+
+@app.get("/market-test")
+def market_test():
+    """Small, read-only FYERS quote test. Does not place or modify orders."""
+    if not access_token:
+        return jsonify({"ok": False, "error": "FYERS is not connected in this server session", "next": "Return to / and connect FYERS again."}), 401
+    settings = fyers_settings()
+    headers = {"Authorization": f"{settings['app_id']}:{access_token}"}
+    try:
+        response = requests.get(
+            f"{DATA_URL}/quotes",
+            params={"symbols": "NSE:SBIN-EQ"},
+            headers=headers,
+            timeout=20,
+        )
+        try:
+            data = response.json()
+        except ValueError:
+            data = {"message": "FYERS returned a non-JSON response"}
+        if response.status_code != 200 or data.get("s") != "ok":
+            return jsonify({
+                "ok": False,
+                "http_status": response.status_code,
+                "fyers_code": data.get("code"),
+                "fyers_status": data.get("s"),
+                "message": data.get("message", "FYERS quote request failed"),
+                "hint": "Check FYERS Market Data permission and whether the access token is still valid."
+            }), 502
+        rows = data.get("d", [])
+        values = rows[0].get("v", {}) if rows else {}
+        # Return only non-sensitive market quote fields; never return auth headers/tokens.
+        return jsonify({
+            "ok": True,
+            "message": "FYERS market-data API responded successfully.",
+            "symbol": "NSE:SBIN-EQ",
+            "ltp": values.get("lp"),
+            "change_percent": values.get("chp"),
+            "volume": values.get("volume"),
+            "note": "This is a connection test only, not the completed F&O scanner."
+        })
+    except requests.RequestException as exc:
+        return jsonify({"ok": False, "error": "Could not reach FYERS market-data API", "detail": str(exc)[:250]}), 502
